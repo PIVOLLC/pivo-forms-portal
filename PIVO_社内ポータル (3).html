@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PIVO 社内フォーム</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700;900&display=swap');
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background:#EEF1F5; }
+  .font-oswald { font-family: 'Oswald', sans-serif; }
+  input[type="date"], input[type="time"], input[type="month"] { -webkit-appearance: none; appearance: none; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="gate" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#1A2333;font-family:'Noto Sans JP',sans-serif;">
+  <div style="background:#fff;border-radius:16px;padding:32px 28px;width:100%;max-width:340px;box-shadow:0 8px 30px rgba(0,0,0,0.25);">
+    <div style="text-align:center;margin-bottom:20px;">
+      <div style="font-family:'Oswald',sans-serif;font-size:22px;letter-spacing:0.15em;color:#1A2333;">PIVO</div>
+      <div style="font-size:12px;color:#6B7683;margin-top:4px;">社内フォームDB ポータル</div>
+    </div>
+    <label style="display:block;font-size:13px;font-weight:bold;color:#1A2333;margin-bottom:8px;">パスワードを入力してください</label>
+    <div style="position:relative;">
+      <input id="gate-input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+        style="width:100%;border:2px solid #C9D0DB;border-radius:8px;padding:12px 14px;font-size:16px;text-align:center;outline:none;color:#1A2333;caret-color:#1A2333;"
+        />
+      <div id="gate-mask" style="position:absolute;inset:2px;border-radius:6px;background:#fff;pointer-events:none;"></div>
+    </div>
+    <button id="gate-submit" style="margin-top:16px;width:100%;background:#1E4FD6;color:#fff;font-weight:bold;border:none;border-radius:8px;padding:14px;font-size:15px;cursor:pointer;">
+      開く
+    </button>
+    <p id="gate-error" style="color:#D93025;font-size:12px;text-align:center;margin-top:10px;height:16px;"></p>
+  </div>
+</div>
+<div id="root" style="display:none;"></div>
+
+<script>
+  // --- Password gate ---
+  // A real type="password" input handles all typing natively (reliable on
+  // every device/browser/IME), while an opaque overlay div sits on top of it
+  // so neither the characters nor the browser's usual bullet/dot mask are
+  // ever visible — meaning the number of characters typed is never revealed.
+  (function () {
+    const PASSCODE = "2026";
+    const gate = document.getElementById('gate');
+    const root = document.getElementById('root');
+    const input = document.getElementById('gate-input');
+    const btn = document.getElementById('gate-submit');
+    const err = document.getElementById('gate-error');
+
+    function tryUnlock() {
+      if (input.value === PASSCODE) {
+        gate.style.display = 'none';
+        root.style.display = 'block';
+      } else {
+        err.textContent = 'パスワードが正しくありません';
+        input.value = '';
+        input.focus();
+      }
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { tryUnlock(); }
+    });
+    btn.addEventListener('click', tryUnlock);
+    setTimeout(() => input.focus(), 100);
+  })();
+</script>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useRef } = React;
+
+/* ================= バックエンド設定 ================= */
+const BACKEND_URL = "https://script.google.com/macros/s/AKfycbyLScAlp2Sc1teQ2fkdAM_dDwIlteKp9Gb88p9xSHKouerkKLFQpMtQSkVmMIya1RDc-Q/exec";
+
+async function submitForm(formType, data, files) {
+  const payload = { formType, data, files };
+  const res = await fetch(BACKEND_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoid CORS preflight
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || "送信に失敗しました");
+  return json;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result; // data:mime;base64,XXXX
+      const base64 = result.split(",")[1];
+      resolve({ name: file.name, mimeType: file.type, base64 });
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ================= アイコン（lucideスタイルのインラインSVG） ================= */
+const ICON_PATHS = {
+  logIn: ["M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4", "M10 17l5-5-5-5", "M15 12H3"],
+  logOut: ["M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", "M16 17l5-5-5-5", "M21 12H9"],
+  barChart: ["M3 3v18h18", "M18 17V9", "M13 17V5", "M8 17v-3"],
+  receipt: ["M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z", "M8 7h8", "M8 11h8", "M8 15h5"],
+  calendarDays: ["M8 2v4", "M16 2v4", "M3 10h18", "M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z", "M8 14h.01", "M12 14h.01", "M16 14h.01", "M8 18h.01", "M12 18h.01"],
+  users: ["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "M22 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"],
+  lifeBuoy: ["M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0", "M12 12m-10 0a10 10 0 1 0 20 0a10 10 0 1 0 -20 0", "M4.93 4.93l4.24 4.24", "M14.83 14.83l4.24 4.24", "M14.83 9.17l4.24-4.24", "M14.83 9.17l3.53-3.53", "M9.17 14.83l-4.24 4.24"],
+  mapPin: ["M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0Z", "M12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"],
+  camera: ["M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z", "M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"],
+  chevronLeft: ["M15 18l-6-6 6-6"],
+  chevronRight: ["M9 18l6-6-6-6"],
+  lock: ["M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2Z", "M7 11V7a5 5 0 0 1 10 0v4"],
+  alertTriangle: ["M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z", "M12 9v4", "M12 17h.01"],
+  image: ["M3 3h18v18H3z", "M8.5 8.5m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0", "M21 15l-5-5L5 21"],
+  user: ["M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"],
+  checkCircle: ["M22 11.08V12a10 10 0 1 1-5.93-9.14", "M22 4L12 14.01l-3-3"],
+  xCircle: ["M12 12m-10 0a10 10 0 1 0 20 0a10 10 0 1 0 -20 0", "M15 9l-6 6", "M9 9l6 6"],
+  info: ["M12 12m-10 0a10 10 0 1 0 20 0a10 10 0 1 0 -20 0", "M12 16v-4", "M12 8h.01"],
+  check: ["M20 6L9 17l-5-5"],
+  x: ["M18 6L6 18", "M6 6l12 12"],
+};
+
+function Icon({ name, size = 16, color = "currentColor", strokeWidth = 2, style }) {
+  const paths = ICON_PATHS[name];
+  if (!paths) return null;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
+      style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0, ...style }}>
+      {paths.map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  );
+}
+
+/* ================= デザイン定数 ================= */
+const INK = "#1A2333";
+const BG = "#EEF1F5";
+const SANS = { fontFamily: "'Noto Sans JP', sans-serif" };
+
+const ACCENTS = {
+  entry: { main: "#1E4FD6", soft: "#EBF0FC", label: "入退店フォーム", code: "F-01" },
+  performance: { main: "#0E7C86", soft: "#E4F1F2", label: "実績報告フォーム", code: "F-02" },
+  performance_SBYM: { main: "#0E7C86", soft: "#E4F1F2", label: "SBYM実績報告", code: "F-02A" },
+  performance_Docomo: { main: "#0E7C86", soft: "#E4F1F2", label: "Docomo実績報告", code: "F-02B" },
+  performance_AuUQ: { main: "#0E7C86", soft: "#E4F1F2", label: "AuUQ実績報告", code: "F-02C" },
+  expense: { main: "#B8863B", soft: "#F7F0E2", label: "経費申請フォーム", code: "F-03" },
+  shift: { main: "#2E7D5B", soft: "#E6F1EB", label: "シフト提出フォーム", code: "F-04" },
+  meeting: { main: "#5B4B8A", soft: "#EEEAF6", label: "面談希望フォーム", code: "F-05" },
+  safety: { main: "#DC2626", soft: "#FCEBEB", label: "安否確認フォーム", code: "F-06" },
+  report: { main: "#B23B32", soft: "#F8EAE8", label: "通報フォーム", code: "F-07" },
+  newStaff: { main: "#0F6E4C", soft: "#E4F3EC", label: "新規スタッフ登録", code: "A-01" },
+};
+
+const SHEET_NAMES = {
+  entry: "入退店報告",
+  performance_SBYM: "実績報告_SBYM",
+  performance_Docomo: "実績報告_Docomo",
+  performance_AuUQ: "実績報告_AuUQ",
+  expense: "経費申請",
+  shift: "シフト提出",
+  meeting: "面談希望",
+  safety: "安否確認",
+  report: "通報",
+};
+
+/* ================= 共通パーツ ================= */
+
+function Badge({ required }) {
+  return required ? (
+    <span className="text-[10px] font-bold text-white rounded px-1.5 py-0.5 shrink-0" style={{ ...SANS, backgroundColor: "#D93025" }}>
+      必須
+    </span>
+  ) : (
+    <span className="text-[10px] font-bold rounded px-1.5 py-0.5 shrink-0 border" style={{ ...SANS, color: "#8A94A6", borderColor: "#C9D0DB" }}>
+      任意
+    </span>
+  );
+}
+
+function Field({ label, required, hint, children }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[14px] font-bold" style={{ ...SANS, color: INK }}>{label}</span>
+        <Badge required={required} />
+      </div>
+      {hint && (
+        <p className="text-[12px] mb-1.5 leading-relaxed" style={{ ...SANS, color: "#6B7683" }}>{hint}</p>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function TextInput(props) {
+  return (
+    <input
+      {...props}
+      className="w-full bg-white border-2 border-[#C9D0DB] rounded-lg px-3.5 py-3 text-[16px] placeholder:text-[#AEB6C2] focus:outline-none focus:border-[#1E4FD6] transition-colors"
+      style={{ ...SANS, color: INK }}
+    />
+  );
+}
+
+function TextArea(props) {
+  return (
+    <textarea
+      {...props}
+      className="w-full bg-white border-2 border-[#C9D0DB] rounded-lg px-3.5 py-3 text-[16px] placeholder:text-[#AEB6C2] focus:outline-none focus:border-[#1E4FD6] min-h-[120px] resize-none"
+      style={{ ...SANS, color: INK }}
+    />
+  );
+}
+
+function Hint({ children }) {
+  return (
+    <p className="text-[12px] mt-1.5 leading-relaxed" style={{ ...SANS, color: "#6B7683" }}>{children}</p>
+  );
+}
+
+function Card({ children }) {
+  return (
+    <div className="bg-white rounded-xl border border-[#DDE2EA] p-4 shadow-[0_1px_2px_rgba(26,35,51,0.05)]">
+      {children}
+    </div>
+  );
+}
+
+function CardTitle({ icon, title, color, badge }) {
+  return (
+    <div className="flex items-center justify-between pb-3 mb-4 border-b-2" style={{ borderColor: `${color}22` }}>
+      <div className="flex items-center gap-2">
+        <span className="w-1 h-5 rounded-full" style={{ backgroundColor: color }} />
+        {icon && <Icon name={icon} size={16} color={color} />}
+        <span className="text-[15px] font-bold" style={{ ...SANS, color: INK }}>{title}</span>
+      </div>
+      {badge && <Badge required={badge === "必須"} />}
+    </div>
+  );
+}
+
+function SelectGrid({ options, value, onChange, cols = 2, color }) {
+  return (
+    <div className={`grid gap-2 ${cols === 2 ? "grid-cols-2" : cols === 3 ? "grid-cols-3" : "grid-cols-4"}`}>
+      {options.map((o) => {
+        const active = value === o;
+        return (
+          <button
+            key={o}
+            type="button"
+            onClick={() => onChange(o)}
+            className="py-3.5 px-1 rounded-lg text-[14px] font-bold border-2 transition-all leading-tight"
+            style={
+              active
+                ? { ...SANS, backgroundColor: color, borderColor: color, color: "white" }
+                : { ...SANS, backgroundColor: "white", borderColor: "#C9D0DB", color: "#4A5568" }
+            }
+          >
+            {active && <Icon name="check" size={13} style={{ marginRight: 4 }} />}
+            {o}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function NoticeBox({ tone = "warn", title, children }) {
+  const conf =
+    tone === "warn"
+      ? { border: "#E3B341", bg: "#FDF6E3", fg: "#8A6116", icon: "alertTriangle" }
+      : tone === "danger"
+      ? { border: "#E58E88", bg: "#FCEEED", fg: "#B23B32", icon: "lock" }
+      : { border: "#8FB3E8", bg: "#EDF3FC", fg: "#1E4FD6", icon: "info" };
+  return (
+    <div className="rounded-lg border-2 px-4 py-3 flex gap-2.5" style={{ borderColor: conf.border, backgroundColor: conf.bg }}>
+      <Icon name={conf.icon} size={16} color={conf.fg} style={{ marginTop: 1 }} />
+      <div className="text-[13px] leading-relaxed" style={{ ...SANS, color: INK }}>
+        {title && <p className="font-bold mb-0.5" style={{ color: conf.fg }}>{title}</p>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SubmitButton({ color, onClick, children, disabled }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="w-full text-white text-[16px] font-bold py-4 rounded-xl transition-all disabled:opacity-40 active:scale-[0.98] shadow-md"
+      style={{ ...SANS, backgroundColor: color }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function NameSplitFields({ sei, mei, onSei, onMei }) {
+  return (
+    <Field label="名前（カタカナ）" required hint="姓と名を分けて、カタカナで入力してください。">
+      <div className="grid grid-cols-2 gap-2.5">
+        <div>
+          <TextInput placeholder="ピボ" value={sei} onChange={(e) => onSei(e.target.value)} />
+          <p className="text-[11px] text-center mt-1" style={{ ...SANS, color: "#8A94A6" }}>姓（セイ）</p>
+        </div>
+        <div>
+          <TextInput placeholder="タロウ" value={mei} onChange={(e) => onMei(e.target.value)} />
+          <p className="text-[11px] text-center mt-1" style={{ ...SANS, color: "#8A94A6" }}>名（メイ）</p>
+        </div>
+      </div>
+    </Field>
+  );
+}
+
+function PivoCodeField({ value, onChange, label = "PIVOコード", hint = "稼働者管理番号（6桁の数字）を入力してください。" }) {
+  return (
+    <Field label={label} required hint={hint}>
+      <TextInput inputMode="numeric" placeholder="000000" maxLength={6} value={value} onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ""))} />
+    </Field>
+  );
+}
+
+function VenueField({ value, onChange }) {
+  return (
+    <Field label="稼働現場" required hint="本日稼働した店舗名を入力してください。">
+      <TextInput placeholder="例：イオンモール〇〇" value={value} onChange={(e) => onChange(e.target.value)} />
+    </Field>
+  );
+}
+
+function NumField({ label, value, onChange }) {
+  return (
+    <div>
+      <p className="text-[12px] font-bold mb-1 leading-tight" style={{ ...SANS, color: "#4A5568" }}>{label}</p>
+      <input
+        type="number"
+        inputMode="numeric"
+        value={value ?? ""}
+        onChange={onChange}
+        placeholder="0"
+        className="w-full bg-white border-2 border-[#C9D0DB] rounded-lg px-3 py-2.5 text-[16px] text-right focus:outline-none focus:border-[#0E7C86]"
+        style={{ ...SANS, color: INK }}
+      />
+    </div>
+  );
+}
+
+function Stamp({ color }) {
+  return (
+    <div className="inline-flex flex-col items-center justify-center border-4 rounded-full px-7 py-5 rotate-[-8deg]" style={{ borderColor: color, color }}>
+      <span className="text-2xl font-bold tracking-widest leading-none" style={SANS}>受付完了</span>
+      <span className="font-oswald text-[10px] tracking-[0.3em] mt-1.5">PIVO INC.</span>
+    </div>
+  );
+}
+
+function SuccessScreen({ accentKey, onBack, error }) {
+  const a = ACCENTS[accentKey];
+  return (
+    <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+      {error ? (
+        <>
+          <Icon name="alertTriangle" size={40} color="#B23B32" />
+          <p className="mt-4 text-lg font-bold" style={{ ...SANS, color: "#B23B32" }}>送信に失敗しました</p>
+          <p className="mt-2 text-[13px] leading-relaxed" style={{ ...SANS, color: "#6B7683" }}>{error}</p>
+        </>
+      ) : (
+        <>
+          <Stamp color={a.main} />
+          <p className="mt-6 text-lg font-bold" style={{ ...SANS, color: INK }}>送信が完了しました</p>
+          <p className="mt-2 text-[13px] leading-relaxed" style={{ ...SANS, color: "#6B7683" }}>
+            ご報告ありがとうございました。<br />
+            内容は担当者が確認します。
+          </p>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={onBack}
+        className="mt-8 text-[14px] font-bold border-2 rounded-lg px-6 py-2.5"
+        style={{ ...SANS, color: a.main, borderColor: a.main }}
+      >
+        フォーム一覧に戻る
+      </button>
+    </div>
+  );
+}
+
+function SendingOverlay({ color }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16">
+      <div style={{
+        width: 36, height: 36, borderRadius: "50%",
+        border: `4px solid ${color}33`, borderTopColor: color,
+        animation: "spin 0.8s linear infinite",
+      }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <p className="mt-4 text-[14px] font-bold" style={{ ...SANS, color: INK }}>送信中です…</p>
+    </div>
+  );
+}
+
+/* ================= 入退店フォーム ================= */
+
+function EntryForm({ onSubmit }) {
+  const a = ACCENTS.entry;
+  const [mode, setMode] = useState("in");
+  const [sei, setSei] = useState("");
+  const [mei, setMei] = useState("");
+  const [workDate, setWorkDate] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
+  const [pivoCode, setPivoCode] = useState("");
+  const [store, setStore] = useState("");
+  const [facePhoto, setFacePhoto] = useState(null);
+  const [eventPhoto, setEventPhoto] = useState(null);
+  const [gps, setGps] = useState(null);
+  const [gpsStatus, setGpsStatus] = useState("idle");
+  const faceRef = useRef(null);
+  const eventRef = useRef(null);
+
+  const getGps = () => {
+    setGpsStatus("loading");
+    if (!navigator.geolocation) { setGpsStatus("error"); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setGps(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`); setGpsStatus("done"); },
+      () => setGpsStatus("error"),
+      { timeout: 8000 }
+    );
+  };
+
+  const okList = ["上半身が写っている", "顔がはっきり見える", "正面を向いている", "1人だけ写っている", "明るく鮮明"];
+  const ngList = ["マスク着用", "遠すぎる・顔が小さい", "横・斜め向き", "複数人が写っている", "顔が切れている", "暗くて不鮮明"];
+
+  const handleSubmit = async () => {
+    const facePhotoData = facePhoto ? await fileToBase64(facePhoto) : null;
+    const eventPhotoData = eventPhoto ? await fileToBase64(eventPhoto) : null;
+    await onSubmit("entry", {
+      mode, sei, mei, workDate, startTime, endTime, pivoCode, store, gps,
+    }, {
+      facePhoto: facePhotoData, eventPhoto: eventPhotoData,
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2 p-1.5 bg-white rounded-xl border border-[#DDE2EA]">
+        {[{ k: "in", label: "入店報告", icon: "logIn" }, { k: "out", label: "退店報告", icon: "logOut" }].map(({ k, label, icon }) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setMode(k)}
+            className="flex items-center justify-center gap-2 py-3.5 rounded-lg text-[15px] font-bold transition-all"
+            style={mode === k ? { ...SANS, backgroundColor: a.main, color: "white" } : { ...SANS, color: "#8A94A6" }}
+          >
+            <Icon name={icon} size={16} /> {label}
+          </button>
+        ))}
+      </div>
+
+      <NoticeBox tone="info" title={mode === "in" ? "入店報告：稼働開始時に送信してください" : "退店報告：稼働終了時に送信してください"}>
+        {mode === "in" ? "店舗に到着したら、業務を始める前に送信してください。" : "業務が終わったら、店舗を出る前に送信してください。"}
+      </NoticeBox>
+
+      <NoticeBox tone="warn" title="必ず稼働先の店舗から送信してください">
+        店舗に到着した後、店舗内から送信・撮影してください。店舗の外からの報告は無効となる場合があります。
+      </NoticeBox>
+      <Card>
+        <CardTitle icon="user" title="稼働者情報" color={a.main} />
+        <div className="space-y-5">
+          <NameSplitFields sei={sei} mei={mei} onSei={setSei} onMei={setMei} />
+          <Field label="稼働日付" required hint="本日の日付を選択してください。">
+            <TextInput type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="開始時刻" required hint="稼働を開始した時刻を入力してください。">
+              <TextInput type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            </Field>
+            <Field label={mode === "in" ? "終了時刻（見込み）" : "終了時刻"} required={mode === "out"} hint={mode === "in" ? "終了予定の時刻を入力してください。" : "稼働を終了した時刻を入力してください。"}>
+              <TextInput type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            </Field>
+          </div>
+          <PivoCodeField value={pivoCode} onChange={setPivoCode} />
+          <VenueField value={store} onChange={setStore} />
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="camera" title="顔写真" color={a.main} badge="必須" />
+        <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>
+          本人確認のため、その場で撮影した顔写真を提出してください。下の例を確認してから撮影してください。
+        </p>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="rounded-lg border-2 p-3" style={{ borderColor: "#2E7D5B44", backgroundColor: "#F2F9F5" }}>
+            <p className="text-[12px] font-bold mb-2 flex items-center gap-1" style={{ ...SANS, color: "#2E7D5B" }}><Icon name="checkCircle" size={13} /> 良い例</p>
+            <ul className="space-y-1.5 text-[12px]" style={{ ...SANS, color: "#37493F" }}>
+              {okList.map((t) => (<li key={t} className="flex items-center gap-1.5"><Icon name="check" size={12} color="#2E7D5B" />{t}</li>))}
+            </ul>
+          </div>
+          <div className="rounded-lg border-2 p-3" style={{ borderColor: "#B23B3244", backgroundColor: "#FBF1F0" }}>
+            <p className="text-[12px] font-bold mb-2 flex items-center gap-1" style={{ ...SANS, color: "#B23B32" }}><Icon name="xCircle" size={13} /> 悪い例</p>
+            <ul className="space-y-1.5 text-[12px]" style={{ ...SANS, color: "#4E3230" }}>
+              {ngList.map((t) => (<li key={t} className="flex items-center gap-1.5"><Icon name="x" size={12} color="#B23B32" />{t}</li>))}
+            </ul>
+          </div>
+        </div>
+        <input ref={faceRef} type="file" accept="image/*" capture="user" className="hidden" onChange={(e) => setFacePhoto(e.target.files?.[0] || null)} />
+        <button type="button" onClick={() => faceRef.current?.click()}
+          className="w-full flex flex-col items-center justify-center gap-1.5 border-2 border-dashed rounded-xl py-6 transition-colors"
+          style={{ borderColor: a.main, backgroundColor: facePhoto ? a.soft : "white" }}>
+          <Icon name="camera" size={26} color={a.main} />
+          <span className="text-[15px] font-bold" style={{ ...SANS, color: a.main }}>
+            {facePhoto ? `撮影済み：${facePhoto.name}` : "タップしてカメラで撮影"}
+          </span>
+        </button>
+      </Card>
+
+      <Card>
+        <CardTitle icon="image" title="イベント写真" color={a.main} badge="任意" />
+        <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>
+          店舗内のイベントブースや販売状況が分かる写真を1枚提出してください。ブース全体が写るように撮影してください。
+        </p>
+        <NoticeBox tone="warn" title="撮影時の注意">
+          <ul className="space-y-1 mt-0.5">
+            <li>・お客様の顔が写らないよう十分に配慮してください</li>
+            <li>・撮影前に周囲の状況を確認してください</li>
+            <li>・お客様から撮影を断られた場合はすぐに中止してください</li>
+          </ul>
+        </NoticeBox>
+        <input ref={eventRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => setEventPhoto(e.target.files?.[0] || null)} />
+        <button type="button" onClick={() => eventRef.current?.click()}
+          className="w-full mt-3 flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-4 text-[14px] font-bold"
+          style={{ ...SANS, borderColor: a.main, color: a.main, backgroundColor: eventPhoto ? a.soft : "white" }}>
+          <Icon name="camera" size={16} /> {eventPhoto ? `撮影済み：${eventPhoto.name}` : "タップしてカメラで撮影"}
+        </button>
+      </Card>
+
+      <Card>
+        <CardTitle icon="mapPin" title="位置情報" color={a.main} badge="必須" />
+        <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>
+          店舗からの送信であることを確認するため、「現在地を取得」ボタンを押してください。
+        </p>
+        <div className="flex gap-2">
+          <input readOnly value={gpsStatus === "done" && gps ? gps : ""} placeholder="未取得"
+            className="flex-1 min-w-0 bg-[#F5F7FA] border-2 border-[#C9D0DB] rounded-lg px-3.5 py-3 text-[14px] placeholder:text-[#AEB6C2]"
+            style={{ ...SANS, color: INK }} />
+          <button type="button" onClick={getGps} className="px-5 rounded-lg text-[14px] font-bold text-white shrink-0" style={{ ...SANS, backgroundColor: a.main }}>
+            {gpsStatus === "loading" ? "取得中…" : "現在地を取得"}
+          </button>
+        </div>
+        {gpsStatus === "error" && (<p className="text-[12px] mt-2 font-bold" style={{ ...SANS, color: "#D93025" }}>位置情報を取得できませんでした。端末の位置情報設定を確認して、もう一度お試しください。</p>)}
+        {gpsStatus === "done" && (<p className="text-[12px] mt-2 font-bold" style={{ ...SANS, color: "#2E7D5B" }}><Icon name="check" size={13} color="#2E7D5B" style={{marginRight:4}} />現在地を取得しました</p>)}
+      </Card>
+
+      <SubmitButton color={a.main} onClick={handleSubmit}>
+        {mode === "in" ? "入店報告を送信する" : "退店報告を送信する"}
+      </SubmitButton>
+    </div>
+  );
+}
+
+/* ================= 実績報告フォーム ================= */
+
+const BRAND_LABELS = { SBYM: "SBYM実績報告", Docomo: "Docomo実績報告", AuUQ: "AuUQ実績報告" };
+const BRAND_FIELDS = {
+  SBYM: ["新規", "機変", "乗換", "固定(SB光/Air)", "電気", "ガス", "PayPayカード", "PayPayカード［ゴールド］"],
+  Docomo: ["新規", "機変", "PI", "イエナカ(光/home 5G)", "電気", "ガス", "Dカード［スタンダード］", "Dカード［ゴールド・プラチナ］"],
+  AuUQ: ["新規", "機変", "乗換", "固定", "電気", "ガス", "au payカード", "au payカード［ゴールド］"],
+};
+
+function StepLabel({ n, text }) {
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <span className="w-6 h-6 rounded-full text-white text-[12px] font-bold flex items-center justify-center shrink-0" style={{ ...SANS, backgroundColor: "#0E7C86" }}>{n}</span>
+      <span className="text-[14px] font-bold" style={{ ...SANS, color: INK }}>{text}</span>
+      <Badge required />
+    </div>
+  );
+}
+
+function PerformanceForm({ brand, onSubmit }) {
+  const accentKey = `performance_${brand}`;
+  const a = ACCENTS[accentKey];
+  const [sei, setSei] = useState("");
+  const [mei, setMei] = useState("");
+  const [pivoCode, setPivoCode] = useState("");
+  const [venue, setVenue] = useState("");
+  const [weather, setWeather] = useState(null);
+  const [footfall, setFootfall] = useState(null);
+  const [category, setCategory] = useState(null);
+  const [role, setRole] = useState(null);
+
+  const [catcherNums, setCatcherNums] = useState({ call: "", interest: "", seat: "" });
+  const [personalNums, setPersonalNums] = useState({});
+  const [siteNums, setSiteNums] = useState({});
+  const [comment, setComment] = useState("");
+
+  const roles = brand === "AuUQ" ? ["キャッチャー", "クローザー"] : ["ディレクター", "キャッチャー", "クローザー"];
+  const fields = BRAND_FIELDS[brand];
+
+  const chooseRole = (r) => {
+    setRole(r);
+    setPersonalNums({});
+    setSiteNums({});
+    setCatcherNums({ call: "", interest: "", seat: "" });
+    setComment("");
+  };
+
+  const handleSubmit = async () => {
+    await onSubmit("performance", {
+      brand, sei, mei, pivoCode, venue, weather, footfall, category, role,
+      catcherNums, personalNums, siteNums, comment,
+    }, {});
+  };
+
+  return (
+    <div className="space-y-4">
+      <NoticeBox tone="info" title="稼働終了後、その日のうちに提出してください">
+        稼働部類・役割を選ぶと、入力する項目が表示されます。
+      </NoticeBox>
+      <Card>
+        <CardTitle icon="user" title="基本情報" color={a.main} />
+        <div className="space-y-5">
+          <NameSplitFields sei={sei} mei={mei} onSei={setSei} onMei={setMei} />
+          <PivoCodeField value={pivoCode} onChange={setPivoCode} />
+          <VenueField value={venue} onChange={setVenue} />
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="info" title="現場状況" color={a.main} />
+        <div className="space-y-5">
+          <Field label="天候" required hint="○＝晴れ／△＝くもり・小雨／×＝雨・悪天候">
+            <SelectGrid options={["○", "△", "×"]} value={weather} onChange={setWeather} cols={3} color={a.main} />
+          </Field>
+          <Field label="集客" required hint="○＝多い／△＝普通／×＝少ない">
+            <SelectGrid options={["○", "△", "×"]} value={footfall} onChange={setFootfall} cols={3} color={a.main} />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="barChart" title="報告内容の選択" color={a.main} />
+        <div className="space-y-5">
+          <div>
+            <StepLabel n={1} text="稼働部類を選択" />
+            <SelectGrid options={["外販", "量販", "店内ヘルパー(その他)"]} value={category} onChange={setCategory} cols={3} color={a.main} />
+          </div>
+          {category && (
+            <div>
+              <StepLabel n={2} text="役割を選択" />
+              <SelectGrid options={roles} value={role} onChange={chooseRole} cols={roles.length} color={a.main} />
+              {brand === "AuUQ" && (<Hint>※ AuUQ実績報告にはディレクターの選択肢はありません。</Hint>)}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {role === "キャッチャー" && (
+        <Card>
+          <CardTitle icon="barChart" title="キャッチャー実績" color={a.main} badge="必須" />
+          <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>本日の件数を数字で入力してください。0件の場合も「0」と入力してください。</p>
+          <div className="grid grid-cols-3 gap-2.5">
+            <NumField label="声かけ数" value={catcherNums.call} onChange={(e) => setCatcherNums({ ...catcherNums, call: e.target.value })} />
+            <NumField label="興味付け数" value={catcherNums.interest} onChange={(e) => setCatcherNums({ ...catcherNums, interest: e.target.value })} />
+            <NumField label="着座数" value={catcherNums.seat} onChange={(e) => setCatcherNums({ ...catcherNums, seat: e.target.value })} />
+          </div>
+          <div className="mt-5">
+            <Field label="本日の稼働のコメント" required hint="現場の状況、気づいたこと、改善点などを記入してください。">
+              <TextArea placeholder="例：午前は人通りが少なかったが、午後からファミリー層への声かけで着座につながった。" value={comment} onChange={(e) => setComment(e.target.value)} />
+            </Field>
+          </div>
+        </Card>
+      )}
+
+      {role === "クローザー" && (
+        <Card>
+          <CardTitle icon="barChart" title="個人実績" color={a.main} badge="必須" />
+          <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>本日の獲得件数を数字で入力してください。0件の場合も「0」と入力してください。</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            {fields.map((f) => (<NumField key={f} label={f} value={personalNums[f]} onChange={(e) => setPersonalNums({ ...personalNums, [f]: e.target.value })} />))}
+          </div>
+          <div className="mt-5">
+            <Field label="稼働所見" required hint="本日の稼働を振り返り、所見を記入してください。">
+              <TextArea placeholder="例：乗換の反応が良く、光とのセット提案が有効だった。" value={comment} onChange={(e) => setComment(e.target.value)} />
+            </Field>
+          </div>
+        </Card>
+      )}
+
+      {role === "ディレクター" && brand !== "AuUQ" && (
+        <>
+          <Card>
+            <CardTitle icon="barChart" title="現場実績の合計" color={a.main} badge="必須" />
+            <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>現場全体の合計件数を数字で入力してください。0件の場合も「0」と入力してください。</p>
+            <div className="grid grid-cols-2 gap-2.5">
+              {fields.map((f) => (<NumField key={`s-${f}`} label={f} value={siteNums[f]} onChange={(e) => setSiteNums({ ...siteNums, [f]: e.target.value })} />))}
+            </div>
+          </Card>
+          <Card>
+            <CardTitle icon="user" title="個人実績" color={a.main} badge="必須" />
+            <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>ご自身の獲得件数を数字で入力してください。</p>
+            <div className="grid grid-cols-2 gap-2.5">
+              {fields.map((f) => (<NumField key={`p-${f}`} label={f} value={personalNums[f]} onChange={(e) => setPersonalNums({ ...personalNums, [f]: e.target.value })} />))}
+            </div>
+            <div className="mt-5">
+              <Field label="稼働所見" required hint="現場全体を振り返り、所見を記入してください。">
+                <TextArea placeholder="例：チーム全体で目標を達成。キャッチャーとの連携が特に良かった。" value={comment} onChange={(e) => setComment(e.target.value)} />
+              </Field>
+            </div>
+          </Card>
+        </>
+      )}
+
+      {role && (<SubmitButton color={a.main} onClick={handleSubmit}>実績を報告する</SubmitButton>)}
+    </div>
+  );
+}
+
+/* ================= 経費申請フォーム ================= */
+
+function ExpenseForm({ onSubmit }) {
+  const a = ACCENTS.expense;
+  const [sei, setSei] = useState("");
+  const [mei, setMei] = useState("");
+  const [workDate, setWorkDate] = useState("");
+  const [pivoCode, setPivoCode] = useState("");
+  const [venue, setVenue] = useState("");
+  const [receipt, setReceipt] = useState(null);
+  const [purpose, setPurpose] = useState("");
+  const [amount, setAmount] = useState("");
+  const [memo, setMemo] = useState("");
+  const fileRef = useRef(null);
+
+  const handleSubmit = async () => {
+    const receiptData = receipt ? await fileToBase64(receipt) : null;
+    await onSubmit("expense", { sei, mei, workDate, pivoCode, venue, purpose, amount, memo }, { receipt: receiptData });
+  };
+
+  return (
+    <div className="space-y-4">
+      <NoticeBox tone="info" title="稼働日ごとに1回、申請してください">領収書はJPEG・PNG・PDFのいずれかでアップロードできます。</NoticeBox>
+      <Card>
+        <CardTitle icon="user" title="申請者情報" color={a.main} />
+        <div className="space-y-5">
+          <NameSplitFields sei={sei} mei={mei} onSei={setSei} onMei={setMei} />
+          <Field label="稼働日" required hint="経費が発生した稼働日を選択してください。">
+            <TextInput type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} />
+          </Field>
+          <PivoCodeField value={pivoCode} onChange={setPivoCode} label="PIVOコード（稼働者管理番号）" />
+          <VenueField value={venue} onChange={setVenue} />
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="receipt" title="経費の内容" color={a.main} />
+        <div className="space-y-5">
+          <Field label="領収書" required hint="領収書の写真、またはPDFをアップロードしてください（JPEG・PNG・PDF対応）。">
+            <input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setReceipt(e.target.files?.[0] || null)} />
+            <button type="button" onClick={() => fileRef.current?.click()}
+              className="w-full flex items-center justify-between gap-2 border-2 border-dashed rounded-xl px-4 py-4 text-[14px] font-bold"
+              style={{ ...SANS, borderColor: a.main, color: a.main, backgroundColor: receipt ? a.soft : "white" }}>
+              <span className="flex items-center gap-2 truncate"><Icon name="receipt" size={16} style={{marginRight:6}} /><span className="truncate">{receipt ? receipt.name : "タップして領収書をアップロード"}</span></span>
+            </button>
+          </Field>
+          <Field label="経費の使用目的" required hint="何のために使った経費か入力してください。">
+            <TextInput placeholder="例：現場までの往復交通費" value={purpose} onChange={(e) => setPurpose(e.target.value)} />
+          </Field>
+          <Field label="領収額（円）" required hint="1日で使用した経費の合計金額を入力してください。">
+            <TextInput type="number" inputMode="numeric" placeholder="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <div className="mt-2 space-y-1 text-[12px] leading-relaxed" style={{ ...SANS, color: "#6B7683" }}>
+              <p>・往復分の領収書が必要です</p>
+              <p>・経費が0円の場合も「0」と入力してください</p>
+            </div>
+          </Field>
+          <Field label="備考" hint="連絡事項があれば入力してください。">
+            <TextArea placeholder="例：岩本承認済み" value={memo} onChange={(e) => setMemo(e.target.value)} />
+          </Field>
+        </div>
+      </Card>
+
+      <SubmitButton color={a.main} onClick={handleSubmit}>経費を申請する</SubmitButton>
+    </div>
+  );
+}
+
+/* ================= シフト提出フォーム ================= */
+
+function ShiftForm({ onSubmit }) {
+  const a = ACCENTS.shift;
+  const weekdays = ["月", "火", "水", "木", "金", "土", "日"];
+  const today = new Date();
+  const defaultMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const [month, setMonth] = useState(defaultMonth);
+  const [sei, setSei] = useState("");
+  const [mei, setMei] = useState("");
+  const [pivoCode, setPivoCode] = useState("");
+  const [memo, setMemo] = useState("");
+
+  const [year, mo] = month.split("-").map(Number);
+  const daysInMonth = new Date(year, mo, 0).getDate();
+  const firstWeekday = (new Date(year, mo - 1, 1).getDay() + 6) % 7;
+
+  const [status, setStatus] = useState({});
+
+  const toggleDay = (day) => {
+    setStatus((prev) => {
+      const cur = prev[day] === undefined ? true : prev[day];
+      return { ...prev, [day]: !cur };
+    });
+  };
+
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const realDays = cells.filter((d) => d !== null);
+  const unavailDays = realDays.filter((d) => status[d] === false);
+  const availDays = realDays.filter((d) => status[d] !== false);
+
+  const handleSubmit = async () => {
+    await onSubmit("shift", {
+      sei, mei, pivoCode, month,
+      availableDays: availDays.join("・"),
+      unavailableDays: unavailDays.join("・"),
+      memo,
+    }, {});
+  };
+
+  return (
+    <div className="space-y-4">
+      <NoticeBox tone="info" title="翌月分のシフトは、毎月指定された日までに提出してください">カレンダーの日付をタップして、稼働できる日・できない日を選んでください。</NoticeBox>
+      <Card>
+        <CardTitle icon="user" title="基本情報" color={a.main} />
+        <div className="space-y-5">
+          <NameSplitFields sei={sei} mei={mei} onSei={setSei} onMei={setMei} />
+          <PivoCodeField value={pivoCode} onChange={setPivoCode} />
+          <Field label="対象月" required hint="シフトを提出する月を選択してください。">
+            <TextInput type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="calendarDays" title="稼働可否の入力" color={a.main} badge="必須" />
+        <div className="rounded-lg p-3 mb-3 space-y-1.5 text-[13px] leading-relaxed border-2" style={{ ...SANS, color: INK, backgroundColor: a.soft, borderColor: `${a.main}33` }}>
+          <p className="font-bold" style={{ color: a.main }}>日付をタップすると切り替わります</p>
+          <p>初期状態：<span className="font-bold" style={{ color: a.main }}>稼働可能（緑）</span></p>
+          <p>タップ後：<span className="font-bold" style={{ color: INK }}>稼働不可（黒）</span></p>
+        </div>
+        <div className="rounded-xl border-2 border-[#DDE2EA] p-3">
+          <div className="grid grid-cols-7 gap-1 mb-1.5">
+            {weekdays.map((w) => (<div key={w} className="text-center text-[11px] font-bold" style={{ ...SANS, color: w === "土" ? "#1E4FD6" : w === "日" ? "#D93025" : "#8A94A6" }}>{w}</div>))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((d, i) => {
+              if (d === null) return <div key={`b${i}`} />;
+              const avail = status[d] === undefined ? true : status[d];
+              const style = avail ? { backgroundColor: a.main, borderColor: a.main, color: "white" } : { backgroundColor: INK, borderColor: INK, color: "white" };
+              return (
+                <button key={d} type="button" onClick={() => toggleDay(d)} className="aspect-square rounded-lg border-2 text-[14px] font-bold flex items-center justify-center transition-colors" style={{ ...SANS, ...style }}>{d}</button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex items-center gap-5 mt-3 text-[13px] font-bold" style={SANS}>
+          <span className="flex items-center gap-1.5" style={{ color: a.main }}><span className="w-3.5 h-3.5 rounded inline-block" style={{ backgroundColor: a.main }} />稼働可能 {availDays.length}日</span>
+          <span className="flex items-center gap-1.5" style={{ color: INK }}><span className="w-3.5 h-3.5 rounded inline-block" style={{ backgroundColor: INK }} />稼働不可 {unavailDays.length}日</span>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="info" title="備考" color={a.main} badge="任意" />
+        <TextArea placeholder="例：15日は午後からであれば稼働できます。" value={memo} onChange={(e) => setMemo(e.target.value)} />
+      </Card>
+
+      <SubmitButton color={a.main} onClick={handleSubmit}>シフトを提出する</SubmitButton>
+    </div>
+  );
+}
+
+/* ================= 面談希望フォーム ================= */
+
+function MeetingForm({ onSubmit }) {
+  const a = ACCENTS.meeting;
+  const [sei, setSei] = useState("");
+  const [mei, setMei] = useState("");
+  const [pivoCode, setPivoCode] = useState("");
+  const [staffPivoCode, setStaffPivoCode] = useState("");
+  const [purpose, setPurpose] = useState(null);
+  const [memo, setMemo] = useState("");
+  const [slots, setSlots] = useState([{ date: "", time: "" }, { date: "", time: "" }, { date: "", time: "" }]);
+
+  const updateSlot = (i, field, val) => {
+    const next = [...slots];
+    next[i] = { ...next[i], [field]: val };
+    setSlots(next);
+  };
+
+  const handleSubmit = async () => {
+    await onSubmit("meeting", { sei, mei, pivoCode, staffPivoCode, purpose, slots, memo }, {});
+  };
+
+  return (
+    <div className="space-y-4">
+      <NoticeBox tone="info" title="担当者から折り返しご連絡します">候補日時は3つまで入力できます。いずれかで日程が確定した時点で、他の候補は不要になります。</NoticeBox>
+      <Card>
+        <CardTitle icon="user" title="基本情報" color={a.main} />
+        <div className="space-y-5">
+          <NameSplitFields sei={sei} mei={mei} onSei={setSei} onMei={setMei} />
+          <PivoCodeField value={pivoCode} onChange={setPivoCode} />
+          <PivoCodeField value={staffPivoCode} onChange={setStaffPivoCode} label="担当者のPIVOコード" hint="面談を希望する担当者のPIVOコード（6桁の数字）を入力してください。" />
+          <Field label="相談内容" required hint="当てはまるものを1つ選んでください。">
+            <SelectGrid options={["定期面談", "業務相談", "キャリア相談", "評価・給与", "その他"]} value={purpose} onChange={setPurpose} cols={2} color={a.main} />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="calendarDays" title="候補日時" color={a.main} badge="必須" />
+        <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>第1希望から順に、日付と開始時間を入力してください。</p>
+        <div className="space-y-2.5">
+          {slots.map((s, i) => (
+            <div key={i} className="rounded-lg border-2 border-[#DDE2EA] p-3">
+              <p className="text-[12px] font-bold mb-2 inline-block rounded px-2 py-0.5" style={{ ...SANS, backgroundColor: a.soft, color: a.main }}>第{i + 1}希望</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-[11px] mb-1" style={{ ...SANS, color: "#8A94A6" }}>日付</p>
+                  <TextInput type="date" value={s.date} onChange={(e) => updateSlot(i, "date", e.target.value)} />
+                </div>
+                <div>
+                  <p className="text-[11px] mb-1" style={{ ...SANS, color: "#8A94A6" }}>開始時間</p>
+                  <TextInput type="time" value={s.time} onChange={(e) => updateSlot(i, "time", e.target.value)} />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="info" title="備考" color={a.main} badge="任意" />
+        <TextArea placeholder="事前に共有しておきたいことがあれば記入してください。" value={memo} onChange={(e) => setMemo(e.target.value)} />
+      </Card>
+
+      <SubmitButton color={a.main} onClick={handleSubmit}>面談を希望する</SubmitButton>
+    </div>
+  );
+}
+
+/* ================= 安否確認フォーム ================= */
+
+function SafetyForm({ onSubmit }) {
+  const a = ACCENTS.safety;
+  const [status, setStatus] = useState(null);
+  const [workDay, setWorkDay] = useState(null);
+  const [action, setAction] = useState(null);
+  const [pivoCode, setPivoCode] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [memo, setMemo] = useState("");
+  const [gps, setGps] = useState(null);
+  const [gpsStatus, setGpsStatus] = useState("idle");
+
+  const getGps = () => {
+    setGpsStatus("loading");
+    if (!navigator.geolocation) { setGpsStatus("error"); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setGps(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`); setGpsStatus("done"); },
+      () => setGpsStatus("error"),
+      { timeout: 8000 }
+    );
+  };
+
+  const now = new Date();
+  const sentAt = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+  const chooseWorkDay = (v) => { setWorkDay(v); setAction(null); };
+
+  const actionOptions = workDay === "休日" ? ["自宅などで安全確保", "避難中", "連絡は取れる状態", "不明・確認中"] : ["通常稼働", "稼働続行", "早退", "不明・確認中"];
+
+  const handleSubmit = async () => {
+    await onSubmit("safety", { sentAt, name, phone, pivoCode, status, workDay, action, gps, memo }, {});
+  };
+
+  return (
+    <div className="space-y-4">
+      <NoticeBox tone="danger" title="稼働日・休日にかかわらずご利用ください">災害・事故などの緊急時に、ご自身の状況を報告するフォームです。まずはご自身の安全を最優先に確保してください。安全が確保できてから送信してください。</NoticeBox>
+      <Card>
+        <CardTitle icon="user" title="基本情報" color={a.main} />
+        <div className="space-y-5">
+          <Field label="送信日時" required hint="自動で記録されます。">
+            <div className="w-full bg-[#F5F7FA] border-2 border-[#DDE2EA] rounded-lg px-3.5 py-3 text-[16px] font-bold" style={{ ...SANS, color: INK }}>{sentAt}</div>
+          </Field>
+          <Field label="氏名" required><TextInput placeholder="例：田中 花子" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label="電話番号" required hint="今つながる連絡先を入力してください。"><TextInput type="tel" placeholder="090-0000-0000" value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
+          <PivoCodeField value={pivoCode} onChange={setPivoCode} />
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="lifeBuoy" title="安否状況" color={a.main} badge="必須" />
+        <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>現在のご自身の状態に最も近いものを選んでください。</p>
+        <SelectGrid options={["安全・無事", "軽傷あり", "重傷・危険", "不明・確認中"]} value={status} onChange={setStatus} cols={2} color={a.main} />
+      </Card>
+
+      <Card>
+        <CardTitle icon="info" title="本日の状況" color={a.main} badge="必須" />
+        <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>本日は稼働日ですか、休日ですか。</p>
+        <SelectGrid options={["稼働日", "休日"]} value={workDay} onChange={chooseWorkDay} cols={2} color={a.main} />
+      </Card>
+
+      <Card>
+        <CardTitle icon="mapPin" title="現在地" color={a.main} badge={workDay === "稼働日" ? "必須" : "任意"} />
+        <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>
+          {workDay === "稼働日" ? "稼働中は現在地の取得が必須です。「現在地を取得」ボタンを押してください。" : "取得できる場合は、現在地を送信してください（任意）。"}
+        </p>
+        <div className="flex gap-2">
+          <input readOnly value={gpsStatus === "done" && gps ? gps : ""} placeholder="未取得" className="flex-1 min-w-0 bg-[#F5F7FA] border-2 border-[#DDE2EA] rounded-lg px-3.5 py-3 text-[14px] placeholder:text-[#AEB6C2]" style={{ ...SANS, color: INK }} />
+          <button type="button" onClick={getGps} className="px-5 rounded-lg text-[14px] font-bold text-white shrink-0" style={{ ...SANS, backgroundColor: a.main }}>{gpsStatus === "loading" ? "取得中…" : "現在地を取得"}</button>
+        </div>
+        {gpsStatus === "error" && (<p className="text-[12px] mt-2 font-bold" style={{ ...SANS, color: "#D93025" }}>位置情報を取得できませんでした。端末の位置情報設定を確認して、もう一度お試しください。</p>)}
+        {gpsStatus === "done" && (<p className="text-[12px] mt-2 font-bold" style={{ ...SANS, color: "#2E7D5B" }}><Icon name="check" size={13} color="#2E7D5B" style={{marginRight:4}} />現在地を取得しました</p>)}
+      </Card>
+
+      {workDay && (
+        <Card>
+          <CardTitle icon="info" title="今後の対応" color={a.main} badge="必須" />
+          <p className="text-[13px] mb-3 leading-relaxed" style={{ ...SANS, color: "#4A5568" }}>{workDay === "休日" ? "現在の状況に近いものを選んでください。" : "この後の稼働予定について選んでください。"}</p>
+          <SelectGrid options={actionOptions} value={action} onChange={setAction} cols={2} color={INK} />
+        </Card>
+      )}
+
+      <Card>
+        <CardTitle icon="info" title="備考（被害状況など）" color={a.main} badge="任意" />
+        <TextArea placeholder="建物の被害、必要なサポートなど、自由に記入してください。" value={memo} onChange={(e) => setMemo(e.target.value)} />
+      </Card>
+
+      <SubmitButton color={a.main} onClick={handleSubmit}>安否を報告する</SubmitButton>
+    </div>
+  );
+}
+
+/* ================= 通報フォーム ================= */
+
+function ReportForm({ onSubmit }) {
+  const a = ACCENTS.report;
+  const [name, setName] = useState("");
+  const [pivoCode, setPivoCode] = useState("");
+  const [contact, setContact] = useState("");
+  const [category, setCategory] = useState(null);
+  const [target, setTarget] = useState("");
+  const [incidentDate, setIncidentDate] = useState("");
+  const [incidentPlace, setIncidentPlace] = useState("");
+  const [detail, setDetail] = useState("");
+  const [agree, setAgree] = useState(false);
+  const [evidence, setEvidence] = useState([]);
+  const evidenceRef = useRef(null);
+
+  const addEvidence = (files) => setEvidence((prev) => [...prev, ...Array.from(files || [])]);
+  const removeEvidence = (idx) => setEvidence((prev) => prev.filter((_, i) => i !== idx));
+
+  const handleSubmit = async () => {
+    const evidenceData = await Promise.all(evidence.map(fileToBase64));
+    await onSubmit("report", { name, pivoCode, contact, category, target, incidentDate, incidentPlace, detail }, { evidence: evidenceData });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border-2 p-4" style={{ borderColor: a.main, backgroundColor: a.soft }}>
+        <div className="flex gap-3">
+          <Icon name="lock" size={20} color={a.main} />
+          <div className="text-[13px] leading-relaxed" style={{ ...SANS, color: INK }}>
+            <p className="font-bold text-[14px] mb-1" style={{ color: a.main }}>この通報は、コンプライアンス担当者のみが確認します。</p>
+            <p>社内の関係者や上長に共有されることは一切ありません。記入いただいた個人情報・通報内容は、事実確認と対応の目的以外には使用せず、厳重に管理・保護します。通報したことによって不利益な扱いを受けることはありません。安心してご記入ください。</p>
+          </div>
+        </div>
+      </div>
+      <Card>
+        <CardTitle icon="user" title="通報者情報" color={a.main} />
+        <div className="space-y-5">
+          <Field label="氏名" required hint="事実確認のため、氏名の入力が必須です。匿名での通報は受け付けていません。">
+            <TextInput placeholder="例：田中 花子" value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <PivoCodeField value={pivoCode} onChange={setPivoCode} />
+          <Field label="連絡先" hint="確認のご連絡が必要な場合に使用します。電話番号またはメールアドレスを入力してください。">
+            <TextInput placeholder="電話番号・メールアドレスなど" value={contact} onChange={(e) => setContact(e.target.value)} />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="alertTriangle" title="通報の内容" color={a.main} />
+        <div className="space-y-5">
+          <Field label="通報の分類" required hint="最も近いものを1つ選んでください。">
+            <SelectGrid options={["ハラスメント", "コンプライアンス違反", "職場環境", "その他"]} value={category} onChange={setCategory} cols={2} color={a.main} />
+          </Field>
+          <Field label="対象者" hint="通報の対象となる人物の氏名や部署・役職など、わかる範囲で入力してください。">
+            <TextInput placeholder="例：〇〇現場のディレクター △△さん" value={target} onChange={(e) => setTarget(e.target.value)} />
+          </Field>
+          <div className="grid grid-cols-2 gap-2.5">
+            <Field label="発生日"><TextInput type="date" value={incidentDate} onChange={(e) => setIncidentDate(e.target.value)} /></Field>
+            <Field label="発生場所"><TextInput placeholder="例：〇〇現場" value={incidentPlace} onChange={(e) => setIncidentPlace(e.target.value)} /></Field>
+          </div>
+          <Field label="詳細内容" required hint="「いつ・どこで・誰が・何をしたか」を、できるだけ具体的に記入してください。">
+            <TextArea placeholder="例：〇月〇日、〇〇現場にて…" value={detail} onChange={(e) => setDetail(e.target.value)} />
+          </Field>
+          <Field label="証拠となる画像" hint="関連する画像があれば添付してください（複数枚可）。">
+            <input ref={evidenceRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addEvidence(e.target.files); e.target.value = ""; }} />
+            <button type="button" onClick={() => evidenceRef.current?.click()} className="w-full flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-4 text-[14px] font-bold" style={{ ...SANS, borderColor: a.main, color: a.main }}><Icon name="camera" size={16} style={{marginRight:6}} />画像を追加する</button>
+            {evidence.length > 0 && (
+              <div className="mt-2.5 space-y-1.5">
+                {evidence.map((f, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 bg-[#F5F7FA] border border-[#DDE2EA] rounded-lg px-3 py-2">
+                    <span className="text-[12px] truncate" style={{ ...SANS, color: INK }}>{f.name}</span>
+                    <button type="button" onClick={() => removeEvidence(i)} className="text-[11px] font-bold shrink-0" style={{ ...SANS, color: "#D93025" }}>削除</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Field>
+        </div>
+      </Card>
+
+      <label className="flex items-start gap-3 rounded-xl border-2 border-[#DDE2EA] bg-white p-4 cursor-pointer" style={SANS}>
+        <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-1 w-4 h-4 accent-[#B23B32]" />
+        <span className="text-[13px] leading-relaxed" style={{ color: INK }}>記入した内容は事実であり、個人情報の取り扱いについての説明を読み、同意します。</span>
+      </label>
+
+      <SubmitButton color={a.main} onClick={handleSubmit} disabled={!agree}>通報する</SubmitButton>
+      {!agree && (<p className="text-[12px] text-center -mt-1" style={{ ...SANS, color: "#8A94A6" }}>※送信するには、上の同意チェックが必要です。</p>)}
+    </div>
+  );
+}
+
+/* ================= 新規スタッフ登録フォーム ================= */
+
+function WeekdayMultiSelect({ value, onChange, color }) {
+  const days = ["月", "火", "水", "木", "金", "土", "日"];
+  const toggle = (d) => onChange(value.includes(d) ? value.filter((x) => x !== d) : [...value, d]);
+  return (
+    <div className="grid grid-cols-7 gap-1.5">
+      {days.map((d) => {
+        const active = value.includes(d);
+        return (
+          <button key={d} type="button" onClick={() => toggle(d)} className="py-2.5 rounded-lg text-[13px] font-bold border-2 transition-colors"
+            style={active ? { ...SANS, backgroundColor: color, borderColor: color, color: "white" } : { ...SANS, backgroundColor: "white", borderColor: "#C9D0DB", color: "#4A5568" }}>{d}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AgreeRow({ checked, onChange, children, color }) {
+  return (
+    <label className="flex items-start gap-3 rounded-xl border-2 border-[#DDE2EA] bg-white p-4 cursor-pointer" style={SANS}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-1 w-4 h-4" style={{ accentColor: color }} />
+      <span className="text-[13px] leading-relaxed" style={{ color: INK }}>{children}</span>
+    </label>
+  );
+}
+
+function NewStaffForm({ onSubmit }) {
+  const a = ACCENTS.newStaff;
+  const [kanjiSei, setKanjiSei] = useState("");
+  const [kanjiMei, setKanjiMei] = useState("");
+  const [kanaSei, setKanaSei] = useState("");
+  const [kanaMei, setKanaMei] = useState("");
+  const [birthDate, setBirthDate] = useState("");
+  const [gender, setGender] = useState(null);
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [emergencyRelation, setEmergencyRelation] = useState("");
+  const [emergencyPhone, setEmergencyPhone] = useState("");
+
+  const age = (() => {
+    if (!birthDate) return null;
+    const b = new Date(birthDate);
+    if (isNaN(b.getTime())) return null;
+    const today = new Date();
+    let a2 = today.getFullYear() - b.getFullYear();
+    const m = today.getMonth() - b.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < b.getDate())) a2--;
+    return a2;
+  })();
+
+  const [idDoc, setIdDoc] = useState(null);
+  const idDocRef = useRef(null);
+  const [invoiceStatus, setInvoiceStatus] = useState(null);
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [bankBranch, setBankBranch] = useState("");
+  const [bankType, setBankType] = useState(null);
+  const [bankNumber, setBankNumber] = useState("");
+  const [bankHolder, setBankHolder] = useState("");
+  const [agreeAnti, setAgreeAnti] = useState(false);
+  const [agreeNda, setAgreeNda] = useState(false);
+
+  const [area, setArea] = useState("");
+  const [availDays, setAvailDays] = useState([]);
+  const [availTime, setAvailTime] = useState("");
+  const [transport, setTransport] = useState(null);
+
+  const [hasExperience, setHasExperience] = useState(null);
+  const [expYears, setExpYears] = useState("");
+  const [expIndustry, setExpIndustry] = useState("");
+  const [qualification, setQualification] = useState("");
+  const [styleTarget, setStyleTarget] = useState(null);
+  const [styleFormat, setStyleFormat] = useState(null);
+  const [pastResults, setPastResults] = useState("");
+
+  const [facePhoto, setFacePhoto] = useState(null);
+  const faceRef = useRef(null);
+
+  const canSubmit = agreeAnti && agreeNda;
+
+  const handleSubmit = async () => {
+    const idDocData = idDoc ? await fileToBase64(idDoc) : null;
+    const facePhotoData = facePhoto ? await fileToBase64(facePhoto) : null;
+    await onSubmit("newStaff", {
+      kanjiSei, kanjiMei, kanaSei, kanaMei, birthDate, age, gender, address, phone, email,
+      emergencyRelation, emergencyPhone, invoiceStatus, invoiceNumber, bankName, bankBranch,
+      bankType, bankNumber, bankHolder, agreeAnti, agreeNda, area, availDays, availTime,
+      transport, hasExperience, expYears, expIndustry, qualification, styleTarget, styleFormat, pastResults,
+    }, { idDoc: idDocData, facePhoto: facePhotoData });
+  };
+
+  return (
+    <div className="space-y-4">
+      <NoticeBox tone="info" title="稼働を開始する前に、一度だけご入力ください">入力いただいた内容は、契約手続き・現場配置・スキルシート作成のために使用します。書類や写真は鮮明なものをご用意ください。</NoticeBox>
+
+      <Card>
+        <CardTitle icon="user" title="① 基本情報" color={a.main} />
+        <div className="space-y-5">
+          <Field label="氏名（漢字）" required>
+            <div className="grid grid-cols-2 gap-2.5">
+              <TextInput placeholder="山田" value={kanjiSei} onChange={(e) => setKanjiSei(e.target.value)} />
+              <TextInput placeholder="太郎" value={kanjiMei} onChange={(e) => setKanjiMei(e.target.value)} />
+            </div>
+          </Field>
+          <Field label="フリガナ" required>
+            <div className="grid grid-cols-2 gap-2.5">
+              <TextInput placeholder="ヤマダ" value={kanaSei} onChange={(e) => setKanaSei(e.target.value)} />
+              <TextInput placeholder="タロウ" value={kanaMei} onChange={(e) => setKanaMei(e.target.value)} />
+            </div>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="生年月日" required><TextInput type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} /></Field>
+            <Field label="年齢" hint="生年月日から自動計算されます。">
+              <div className="w-full bg-[#F5F7FA] border-2 border-[#DDE2EA] rounded-lg px-3.5 py-3 text-[16px] font-bold" style={{ ...SANS, color: INK }}>{age !== null ? `${age} 歳` : "―"}</div>
+            </Field>
+          </div>
+          <Field label="性別" required><SelectGrid options={["男性", "女性", "回答しない"]} value={gender} onChange={setGender} cols={3} color={a.main} /></Field>
+          <Field label="住所" required><TextInput placeholder="例：神奈川県川崎市〇〇1-2-3" value={address} onChange={(e) => setAddress(e.target.value)} /></Field>
+          <Field label="電話番号" required><TextInput type="tel" placeholder="090-0000-0000" value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
+          <Field label="メールアドレス" required><TextInput type="email" placeholder="example@email.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+          <Field label="緊急連絡先" required hint="ご本人以外の連絡先（続柄と電話番号）を入力してください。">
+            <div className="grid grid-cols-2 gap-2.5">
+              <TextInput placeholder="続柄（例：母）" value={emergencyRelation} onChange={(e) => setEmergencyRelation(e.target.value)} />
+              <TextInput type="tel" placeholder="電話番号" value={emergencyPhone} onChange={(e) => setEmergencyPhone(e.target.value)} />
+            </div>
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="lock" title="② 本人確認・契約関連" color={a.main} />
+        <div className="space-y-5">
+          <Field label="本人確認書類の写し" required hint="運転免許証・マイナンバーカードなど、氏名と顔写真が確認できる書類を撮影・添付してください。">
+            <input ref={idDocRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => setIdDoc(e.target.files?.[0] || null)} />
+            <button type="button" onClick={() => idDocRef.current?.click()} className="w-full flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-4 text-[14px] font-bold" style={{ ...SANS, borderColor: a.main, color: a.main, backgroundColor: idDoc ? a.soft : "white" }}>
+              <Icon name="camera" size={16} style={{marginRight:6}} />{idDoc ? idDoc.name : "タップして撮影・アップロード"}
+            </button>
+          </Field>
+          <Field label="インボイス登録番号" hint="登録状況を選択してください。取得済みの場合は番号も入力してください。">
+            <SelectGrid options={["取得済み", "取得予定", "取得しない"]} value={invoiceStatus} onChange={setInvoiceStatus} cols={3} color={a.main} />
+            {invoiceStatus === "取得済み" && (<div className="mt-2.5"><TextInput placeholder="T1234567890123" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>)}
+          </Field>
+          <Field label="銀行口座情報（振込先）" required>
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-2 gap-2.5">
+                <TextInput placeholder="銀行名" value={bankName} onChange={(e) => setBankName(e.target.value)} />
+                <TextInput placeholder="支店名" value={bankBranch} onChange={(e) => setBankBranch(e.target.value)} />
+              </div>
+              <SelectGrid options={["普通", "当座"]} value={bankType} onChange={setBankType} cols={2} color={a.main} />
+              <TextInput placeholder="口座番号" value={bankNumber} onChange={(e) => setBankNumber(e.target.value)} />
+              <TextInput placeholder="口座名義（カタカナ）" value={bankHolder} onChange={(e) => setBankHolder(e.target.value)} />
+            </div>
+          </Field>
+          <AgreeRow checked={agreeAnti} onChange={setAgreeAnti} color={a.main}>反社会的勢力排除に関する誓約に同意します。</AgreeRow>
+          <AgreeRow checked={agreeNda} onChange={setAgreeNda} color={a.main}>NDA（秘密保持契約）に同意します。</AgreeRow>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="mapPin" title="③ 稼働条件" color={a.main} />
+        <div className="space-y-5">
+          <Field label="稼働可能エリア" required hint="現場に出られる都道府県・最寄駅などを入力してください。">
+            <TextInput placeholder="例：神奈川県・東京都南部／〇〇駅から30分圏内" value={area} onChange={(e) => setArea(e.target.value)} />
+          </Field>
+          <Field label="稼働可能な曜日" required><WeekdayMultiSelect value={availDays} onChange={setAvailDays} color={a.main} /></Field>
+          <Field label="稼働可能な時間帯" hint="例：平日10:00〜18:00、土日は終日 など">
+            <TextInput placeholder="例：平日10:00〜18:00" value={availTime} onChange={(e) => setAvailTime(e.target.value)} />
+          </Field>
+          <Field label="移動手段" required><SelectGrid options={["自家用車", "バイク", "公共交通機関"]} value={transport} onChange={setTransport} cols={3} color={a.main} /></Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="barChart" title="④ 経験・スキル" color={a.main} />
+        <div className="space-y-5">
+          <Field label="販売経験の有無" required><SelectGrid options={["あり", "なし"]} value={hasExperience} onChange={setHasExperience} cols={2} color={a.main} /></Field>
+          {hasExperience === "あり" && (
+            <div className="grid grid-cols-2 gap-2.5">
+              <TextInput placeholder="経験年数（例：3年）" value={expYears} onChange={(e) => setExpYears(e.target.value)} />
+              <TextInput placeholder="業界（例：携帯キャリア）" value={expIndustry} onChange={(e) => setExpIndustry(e.target.value)} />
+            </div>
+          )}
+          <Field label="保有資格" hint="あれば入力してください（任意）。"><TextInput placeholder="例：普通自動車第一種運転免許" value={qualification} onChange={(e) => setQualification(e.target.value)} /></Field>
+          <Field label="得意な販売スタイル" hint="当てはまるものを選んでください（任意）。">
+            <div className="space-y-2">
+              <SelectGrid options={["法人", "個人", "どちらも"]} value={styleTarget} onChange={setStyleTarget} cols={3} color={a.main} />
+              <SelectGrid options={["店頭", "イベント", "どちらも"]} value={styleFormat} onChange={setStyleFormat} cols={3} color={a.main} />
+            </div>
+          </Field>
+          <Field label="過去の実績" hint="簡単で構いません（任意）。"><TextArea placeholder="例：〇〇キャリア新規獲得 月間MVP2回" value={pastResults} onChange={(e) => setPastResults(e.target.value)} /></Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle icon="camera" title="⑤ その他" color={a.main} />
+        <Field label="顔写真" required hint="現場配置・スキルシート作成に使用します。正面・無帽・明るい場所で撮影してください。">
+          <input ref={faceRef} type="file" accept="image/*" capture="user" className="hidden" onChange={(e) => setFacePhoto(e.target.files?.[0] || null)} />
+          <button type="button" onClick={() => faceRef.current?.click()} className="w-full flex flex-col items-center justify-center gap-1.5 border-2 border-dashed rounded-xl py-6" style={{ borderColor: a.main, backgroundColor: facePhoto ? a.soft : "white" }}>
+            <Icon name="camera" size={22} color={a.main} />
+            <span className="text-[15px] font-bold" style={{ ...SANS, color: a.main }}>{facePhoto ? facePhoto.name : "タップしてカメラで撮影"}</span>
+          </button>
+        </Field>
+      </Card>
+
+      <SubmitButton color={a.main} onClick={handleSubmit} disabled={!canSubmit}>登録を申請する</SubmitButton>
+      {!canSubmit && (<p className="text-[12px] text-center -mt-1" style={{ ...SANS, color: "#8A94A6" }}>※送信するには、誓約・NDAへの同意が必要です。</p>)}
+    </div>
+  );
+}
+
+/* ================= アプリ本体 ================= */
+
+function PerformanceBrandMenu({ onSelect }) {
+  const brands = [
+    { key: "SBYM", label: "SBYM実績報告", desc: "SBYMブランドの稼働実績を報告します" },
+    { key: "Docomo", label: "Docomo実績報告", desc: "Docomoブランドの稼働実績を報告します" },
+    { key: "AuUQ", label: "AuUQ実績報告", desc: "AuUQブランドの稼働実績を報告します" },
+  ];
+  const a = ACCENTS.performance;
+  return (
+    <div className="space-y-4">
+      <NoticeBox tone="info" title="ブランドを選択してください">ブランドごとに入力する実績項目が異なります。該当するブランドを選んでください。</NoticeBox>
+      <div className="space-y-2.5">
+        {brands.map(({ key, label, desc }) => (
+          <button key={key} type="button" onClick={() => onSelect(key)} className="w-full flex items-center gap-3.5 bg-white rounded-xl p-4 text-left border border-[#DDE2EA] active:scale-[0.98] transition-transform shadow-[0_1px_2px_rgba(26,35,51,0.05)]">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: a.soft }}><Icon name="barChart" size={20} color={a.main} /></div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[15px] font-bold" style={{ ...SANS, color: INK }}>{label}</p>
+              <p className="text-[12px] mt-0.5 leading-snug" style={{ ...SANS, color: "#6B7683" }}>{desc}</p>
+            </div>
+            <Icon name="chevronRight" size={16} color="#C9D0DB" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [view, setView] = useState("home");
+  const [status, setStatus] = useState("idle"); // idle | sending | success | error
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const openForm = (key) => { setStatus("idle"); setView(key); };
+  const backHome = () => { setStatus("idle"); setView("home"); };
+
+  const handleSubmit = async (formType, data, files) => {
+    setStatus("sending");
+    try {
+      await submitForm(formType, data, files);
+      setStatus("success");
+    } catch (e) {
+      setErrorMsg(String(e.message || e));
+      setStatus("error");
+    }
+  };
+
+  const cards = [
+    { key: "entry", icon: "mapPin", desc: "入店・退店時に報告" },
+    { key: "performance", icon: "barChart", desc: "稼働終了後に実績を報告" },
+    { key: "expense", icon: "receipt", desc: "交通費などの経費を申請" },
+    { key: "shift", icon: "calendarDays", desc: "翌月の稼働可能日を提出" },
+    { key: "meeting", icon: "users", desc: "担当者との面談を申請" },
+    { key: "safety", icon: "lifeBuoy", desc: "緊急時の安否を報告" },
+    { key: "report", icon: "alertTriangle", desc: "コンプライアンス上の問題を報告" },
+  ];
+  const adminCards = [{ key: "newStaff", icon: "user", desc: "稼働開始前の基本情報・契約手続き" }];
+
+  return (
+    <div className="min-h-screen w-full flex justify-center" style={{ backgroundColor: BG }}>
+      <div className="w-full max-w-md min-h-screen flex flex-col" style={{ backgroundColor: BG }}>
+        <div className="px-5 pt-5 pb-4 sticky top-0 z-10" style={{ backgroundColor: INK }}>
+          <div className="flex items-center gap-2.5">
+            {view !== "home" && (<button type="button" onClick={backHome} className="text-white/80 -ml-1.5 p-1 flex items-center gap-0.5"><Icon name="chevronLeft" size={20} /></button>)}
+            <div className="flex-1 min-w-0">
+              {view === "home" ? (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <p className="font-oswald text-white text-xl tracking-[0.15em]">PIVO</p>
+                    <p className="text-white/60 text-[12px] font-bold" style={SANS}>社内フォーム</p>
+                  </div>
+                  <p className="text-white/40 text-[10px] tracking-[0.15em] mt-0.5" style={SANS}>軸を持て。そして、動け。</p>
+                </>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <p className="text-white text-[16px] font-bold truncate" style={SANS}>{ACCENTS[view].label}</p>
+                  <span className="font-oswald text-[10px] tracking-[0.2em] text-white/40 shrink-0 ml-2">{ACCENTS[view].code}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 px-4 py-5">
+          {view === "home" && (
+            <div>
+              <div className="space-y-3">
+                {cards.map(({ key, icon, desc }) => {
+                  const a = ACCENTS[key];
+                  return (
+                    <button key={key} type="button" onClick={() => openForm(key)} className="w-full flex items-stretch gap-0 bg-white rounded-xl text-left border-2 border-[#DDE2EA] active:scale-[0.98] transition-transform shadow-[0_1px_3px_rgba(26,35,51,0.08)] overflow-hidden">
+                      <div className="w-1.5 shrink-0" style={{ backgroundColor: a.main }} />
+                      <div className="flex items-center gap-3.5 flex-1 min-w-0 p-4">
+                        <div className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: a.soft }}><Icon name={icon} size={24} color={a.main} /></div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[16px] font-bold leading-tight" style={{ ...SANS, color: INK }}><span style={{ color: a.main }}>{a.code}｜</span>{a.label}</p>
+                          <p className="text-[13px] mt-1 leading-snug font-bold" style={{ ...SANS, color: "#4A5568" }}>{desc}</p>
+                        </div>
+                        <Icon name="chevronRight" size={18} color={a.main} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="text-[13px] font-bold mt-7 mb-3 tracking-wide" style={{ ...SANS, color: "#8A94A6" }}>その他事務手続き</p>
+              <div className="space-y-3">
+                {adminCards.map(({ key, icon, desc }) => {
+                  const a = ACCENTS[key];
+                  return (
+                    <button key={key} type="button" onClick={() => openForm(key)} className="w-full flex items-stretch gap-0 bg-white rounded-xl text-left border-2 border-[#DDE2EA] active:scale-[0.98] transition-transform shadow-[0_1px_3px_rgba(26,35,51,0.08)] overflow-hidden">
+                      <div className="w-1.5 shrink-0" style={{ backgroundColor: a.main }} />
+                      <div className="flex items-center gap-3.5 flex-1 min-w-0 p-4">
+                        <div className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: a.soft }}><Icon name={icon} size={24} color={a.main} /></div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[16px] font-bold leading-tight" style={{ ...SANS, color: INK }}><span style={{ color: a.main }}>{a.code}｜</span>{a.label}</p>
+                          <p className="text-[13px] mt-1 leading-snug font-bold" style={{ ...SANS, color: "#4A5568" }}>{desc}</p>
+                        </div>
+                        <Icon name="chevronRight" size={18} color={a.main} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-6 rounded-xl border-2 border-[#DDE2EA] bg-white p-4">
+                <p className="text-[14px] font-bold mb-1.5" style={{ ...SANS, color: INK }}>お困りのときは</p>
+                <p className="text-[13px] leading-relaxed font-bold" style={{ ...SANS, color: "#4A5568" }}>入力・送信でお困りの場合は、担当営業または本社までご連絡ください。</p>
+              </div>
+            </div>
+          )}
+
+          {view !== "home" && status === "sending" && (<SendingOverlay color={ACCENTS[view].main} />)}
+
+          {view !== "home" && status === "idle" && (
+            <div>
+              {view === "entry" && <EntryForm onSubmit={handleSubmit} />}
+              {view === "performance" && <PerformanceBrandMenu onSelect={(brand) => setView(`performance_${brand}`)} />}
+              {view === "performance_SBYM" && <PerformanceForm brand="SBYM" onSubmit={handleSubmit} />}
+              {view === "performance_Docomo" && <PerformanceForm brand="Docomo" onSubmit={handleSubmit} />}
+              {view === "performance_AuUQ" && <PerformanceForm brand="AuUQ" onSubmit={handleSubmit} />}
+              {view === "expense" && <ExpenseForm onSubmit={handleSubmit} />}
+              {view === "shift" && <ShiftForm onSubmit={handleSubmit} />}
+              {view === "meeting" && <MeetingForm onSubmit={handleSubmit} />}
+              {view === "safety" && <SafetyForm onSubmit={handleSubmit} />}
+              {view === "report" && <ReportForm onSubmit={handleSubmit} />}
+              {view === "newStaff" && <NewStaffForm onSubmit={handleSubmit} />}
+            </div>
+          )}
+
+          {view !== "home" && (status === "success" || status === "error") && (
+            <SuccessScreen accentKey={view.startsWith("performance_") ? view : view} onBack={backHome} error={status === "error" ? errorMsg : null} />
+          )}
+        </div>
+
+        <div className="px-5 py-4 text-center" style={SANS}>
+          <p className="text-[10px] tracking-[0.1em]" style={{ color: "#AEB6C2" }}>© 合同会社PIVO — 社内フォーム</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
