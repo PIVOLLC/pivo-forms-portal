@@ -1263,13 +1263,15 @@ function ExpenseForm({
   const [workDate, setWorkDate] = useState("");
   const [pivoCode, setPivoCode] = useState("");
   const [venue, setVenue] = useState("");
-  const [receipt, setReceipt] = useState(null);
+  const [receipts, setReceipts] = useState([]);
   const [purpose, setPurpose] = useState("");
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const fileRef = useRef(null);
+  const addReceipts = files => setReceipts(prev => [...prev, ...Array.from(files || [])]);
+  const removeReceipt = idx => setReceipts(prev => prev.filter((_, i) => i !== idx));
   const handleSubmit = async () => {
-    const receiptData = receipt ? await fileToBase64(receipt) : null;
+    const receiptData = await Promise.all(receipts.map(fileToBase64));
     await onSubmit("expense", {
       sei,
       mei,
@@ -1323,13 +1325,17 @@ function ExpenseForm({
   }, /*#__PURE__*/React.createElement(Field, {
     label: "領収書",
     required: true,
-    hint: "領収書の写真、またはPDFをアップロードしてください（JPEG・PNG・PDF対応）。"
+    hint: "領収書の写真、またはPDFをアップロードしてください（JPEG・PNG・PDF対応、複数枚可）。"
   }, /*#__PURE__*/React.createElement("input", {
     ref: fileRef,
     type: "file",
     accept: "application/pdf,image/jpeg,image/png",
+    multiple: true,
     className: "hidden",
-    onChange: e => setReceipt(e.target.files?.[0] || null)
+    onChange: e => {
+      addReceipts(e.target.files);
+      e.target.value = "";
+    }
   }), /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: () => fileRef.current?.click(),
@@ -1338,19 +1344,34 @@ function ExpenseForm({
       ...SANS,
       borderColor: a.main,
       color: a.main,
-      backgroundColor: receipt ? a.soft : "white"
+      backgroundColor: receipts.length > 0 ? a.soft : "white"
     }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "flex items-center gap-2 truncate"
   }, /*#__PURE__*/React.createElement(Icon, {
     name: "receipt",
     size: 16,
     style: {
       marginRight: 6
     }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "truncate"
-  }, receipt ? receipt.name : "タップして領収書をアップロード")))), /*#__PURE__*/React.createElement(Field, {
+  }), receipts.length > 0 ? `${receipts.length}件選択中（タップして追加）` : "タップして領収書をアップロード"), receipts.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "mt-2.5 space-y-1.5"
+  }, receipts.map((f, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "flex items-center justify-between gap-2 bg-[#F5F7FA] border border-[#DDE2EA] rounded-lg px-3 py-2"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-[12px] truncate",
+    style: {
+      ...SANS,
+      color: INK
+    }
+  }, f.name), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => removeReceipt(i),
+    className: "text-[11px] font-bold shrink-0",
+    style: {
+      ...SANS,
+      color: "#D93025"
+    }
+  }, "削除"))))), /*#__PURE__*/React.createElement(Field, {
     label: "経費の使用目的",
     required: true,
     hint: "何のために使った経費か入力してください。"
